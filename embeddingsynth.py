@@ -23,6 +23,10 @@ class EmbeddingGeneration:
             self.embed = self.model.wte
         else:
             self.embed = self.model.transformer.wte
+        if hasattr(self.model, 'wpe'):
+            self.pembed = self.model.wpe
+        else:
+            self.pembed = self.model.transformer.wpe
         self.expanded_embeddings = None
 
     @property
@@ -44,8 +48,11 @@ class EmbeddingGeneration:
         return logits.softmax(dim=-1)
     def logits2strs(self, logits):
         return self.ids2strs(self.logits2ids(logits))
-    def ids2embeds(self, ids):
-        return self.embed(ids)
+    def ids2embeds(self, ids, position=False):
+        if position:
+            return self.pembed(ids)
+        else:
+            return self.embed(ids)
     def ids2strs(self, ids):
         if len(ids.shape) > 1:
             return self.tokenizer.batch_decode(ids)
@@ -80,6 +87,9 @@ class EmbeddingGeneration:
 
     # each pass through a model produces a distribution of tokens for each known token, and the next unknown token
     def generate(self, embeds, size=None, logits2embeds=greedy, output=logits2strs, handler=None):#stop_sequence=None, handler=None):
+        
+        # passing in the position embeddings, which are just more embeddings summed with the input embeddings, may for gpt2 require processing the transformer layers manually.
+
         #ids = self.inputs2ids(embeds)
         #if stop_sequence is not None:
         #    stop_sequence = self.inputs2ids(stop_sequence)
