@@ -67,8 +67,8 @@ class EmbeddingGeneration:
 
     def greedy(self, logits):
         return self.ids2embeds(self.logits2ids(logits))
-    #def sum(self, logits):
-    #    return (self.logits2probs(logits) @ self.embed.weight)
+    def sum(self, logits):
+        return (self.logits2probs(logits) @ self.embed.weight)
 
     def logits2ids(self, logits):
         return logits.argmax(dim=-1)
@@ -126,34 +126,41 @@ class EmbeddingGeneration:
     def logits2logits(self, logits):
         return logits
 
-    def cat(self, *parts, shape = None):
+    def cat(self, *parts, shape = None, dim =-2):
         if shape is None:
             shape = [1] * max((len(part.shape) for part in parts))
             for part in parts:
                 for idx in range(-len(part.shape), 0):
-                    shape[idx] = max(shape[idx], part.shape[idx])
+                    if idx != dim:
+                        shape[idx] = max(shape[idx], part.shape[idx])
+        else:
+            shape = [*shape]
         reshaped = []
         for idx, part in enumerate(parts):
             while len(part.shape) < len(shape):
                 part = part[None,...]
+            shape[dim] = part.shape[dim]
             part = part.expand(shape)
             reshaped.append(part)
-        return torch.cat(reshaped)
+        return torch.cat(reshaped, dim=dim)
 
-    def prefix(self, prefix, embeds):
-        return self.cat(prefix, embeds, shape = embeds.shape)
+    def prefix(self, prefix, embeds, dim = -2):
+        return self.cat(prefix, embeds, shape = embeds.shape, dim = dim)
 
-    def suffix(self, embeds, suffix):
-        return self.cat(embeds, suffix, shape = embeds.shape)
+    def suffix(self, embeds, suffix, dim = -2):
+        return self.cat(embeds, suffix, shape = embeds.shape, dim = dim)
 
-    def process(self, embeds, output=logits2strs):
+    def process(self, embeds, output=logits2strs, prefix = True):
         embeds = self.inputs2embeds(embeds)
         output = func2method(self, output)
 
-        prefixed_embeds = self.prefix(self.BOS, embeds)
+        if prefix:
+            if prefix is True:
+                prefix = self.BOS
+            embeds = self.prefix(prefix, embeds)
 
         output = func2method(self, output)
-        model_logits = self.model(inputs_embeds = prefixed_embeds).logits
+        model_logits = self.model(inputs_embeds = embeds).logits
        
         return output(model_logits)
 
@@ -193,10 +200,21 @@ class EmbeddingGeneration:
         #return output(logits)
 
     def loss(self, input_embeds, label_probs):
+        # OUT OF GPU RAM ISSUES COULD BE ADDRESSED VIA GRADIENT CHECKPOINTING
         embeds = self.inputs2embeds(input_embeds)
         model_logits = self.model(inputs_embeds = embeds).logits
-        embeds = embeds[...,1:,:]
-        model_logits = model_logits[...,:-1,:]
+
+        seq_len, vocab_size = model_logits.shape[-2:]
+        model_logits = model_logits[...,:-1,:].reshape(-1, vocab_size)
+
+        if label_probs.shape == input_embeds.shape[:-1]:
+            label_probs = label_probs[...,1:].reshape(-1)
+        else:
+            label_probs = label_probs[...,1:,:].reshape(-1, vocab_size)
+
+        if torch.has_cuda:
+            if label_probs.device.type == 'cpu':
+                label_probs = label_probs.cuda()
 
         return torch.nn.functional.cross_entropy(model_logits, label_probs)
 
@@ -372,20 +390,28 @@ if __name__ == '__main__':
 #    ##output = gpt2.generate("Hello world,", 16, logits2embeds=gpt2.sum)
 #    ##print(output)
 #
-#    import pdb; pdb.set_trace()
+#    #import pdb; pdb.set_trace()
 #    batch_size=16
 #    prompt_len=4
 #    gen_len=16
 #    with model.train(torch.optim.AdamW, lr=0.0001) as training:
 #        while True:
-#            with torch.no_grad():
-#                # here we generate prompt
+#            #with torch.no_grad():
+#                # here we generate data. it's just prompts right now but i meant to just use them as a seed and generate
 #                prompts = torch.randint(0, model.embed.num_embeddings, (batch_size,prompt_len))
+#                pre_embeds = model.inputs2embeds(prompts)
 #                # 
-#                logits, sum = next(model.generate(prompts, gen_len + prompt_len, output=model.sum))
+#                post_logits = model.process(pre_embeds, output=model.logits2logits, prefix=False)[...,:-1,:]
+#                post_embeds = model.sum(post_logits)
+#                    # for the sum idea, we would want these post_embeds to generate a further token distribution
+#                    # the same as previously happened without them.
+#                    # this is present in the prompt data, but it's changing which is unideal.
+#                    ## anyway, so we want the post_embeds to match the pre_embeds, roughly.
+#                    #    # where pre_embeds is actually 
+#                #logits, sum = next(model.generate(prompts, gen_len + prompt_len, output=model.sum))
 #
 #                # this uses probabilities of every token
-#                loss = model.loss(embeds)
+#                loss = model.loss(post_embeds, prompts[...,1:])
 #                loss.backward()
 #                print(loss)
-#                
+                
