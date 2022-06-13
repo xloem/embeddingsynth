@@ -27,46 +27,29 @@ class EmbeddingGeneration:
         else:
             self.embed = self.model.transformer.wte
         
-        #class WrappedWPE(
-        #class WrappedObject:
-        #    def __init__(self, wrappee, **changed_attrs):
+        #if hasattr(self.model, 'wpe'):
+        #    self.pembed = self.model.wpe
+        #    wpe_spot = (self.model, 'wpe')
+        #    #self.model = WrappedObject(self.model, wpe = wrap_wpe)
+        #else:
+        #    self.pembed = self.model.transformer.wpe
+        #    wpe_spot = (self.model.transformer, 'wpe')
+        #    #self.model = WrappedObject(self.model, transformer = WrappedObject(self.model.transformer, wpe = wrap_wpe))
+        #class WrappedEmbedding(torch.nn.Module):
+        #    def __init__(self, wrappee):
+        #        super().__init__()
         #        self.wrappee = wrappee
-        #        self.changed_attrs = changed_attrs
-        #    def __getattr__(self, item):
-        #        value = self.changed_attrs.get(item)
-        #        if value is None:
-        #            return getattr(self.wrappee, item)
-        #    def __call__(self, *params, **kwparams):
-        #        return self.wrappee(*params, **kwparams)
-        #def wrap_wpe(position_ids):
-        #    '''this lets us pass pregenerated position embeddings to the model without it trying to generate them itself'''
-        #    if position_ids.is_floating_point:
-        #        return position_ids
-        #    else:
-        #        return self.pembed(position_ids)
-        if hasattr(self.model, 'wpe'):
-            self.pembed = self.model.wpe
-            wpe_spot = (self.model, 'wpe')
-            #self.model = WrappedObject(self.model, wpe = wrap_wpe)
-        else:
-            self.pembed = self.model.transformer.wpe
-            wpe_spot = (self.model.transformer, 'wpe')
-            #self.model = WrappedObject(self.model, transformer = WrappedObject(self.model.transformer, wpe = wrap_wpe))
-        class WrappedEmbedding(torch.nn.Module):
-            def __init__(self, wrappee):
-                super().__init__()
-                self.wrappee = wrappee
-                self.inputs_by_positions = {}
-            def prepare(self, inputs_embeds, positions_embeds):
-                self.inputs_by_positions[positions_embeds.data_ptr()] = inputs_embeds
-            def forward(self, position_ids):
-                input_embeds = self.inputs_by_positions.pop(position_ids.data_ptr(), None)
-                if position_ids.dtype.is_floating_point:
-                    return position_ids.view(-1, input_embeds.shape[-2], self.wrappee.embedding_dim)
-                else:
-                    return self.wrappee(position_ids)
-        self.pembed_wrapper = WrappedEmbedding(self.pembed)
-        setattr(wpe_spot[0], wpe_spot[1], self.pembed_wrapper)
+        #        self.inputs_by_positions = {}
+        #    def prepare(self, inputs_embeds, positions_embeds):
+        #        self.inputs_by_positions[positions_embeds.data_ptr()] = inputs_embeds
+        #    def forward(self, position_ids):
+        #        input_embeds = self.inputs_by_positions.pop(position_ids.data_ptr(), None)
+        #        if position_ids.dtype.is_floating_point:
+        #            return position_ids.view(-1, input_embeds.shape[-2], self.wrappee.embedding_dim)
+        #        else:
+        #            return self.wrappee(position_ids)
+        #self.pembed_wrapper = WrappedEmbedding(self.pembed)
+        #setattr(wpe_spot[0], wpe_spot[1], self.pembed_wrapper)
 
     @property
     def dim(self):
@@ -87,10 +70,10 @@ class EmbeddingGeneration:
         return logits.softmax(dim=-1)
     def logits2strs(self, logits):
         return self.ids2strs(self.logits2ids(logits))
-    def ids2embeds(self, ids, position=False):
-        if position:
-            return self.pembed(ids)
-        else:
+    def ids2embeds(self, ids):#, position=False):
+        #if position:
+        #    return self.pembed(ids)
+        #else:
             return self.embed(ids)
     def ids2strs(self, ids):
         if len(ids.shape) > 1:
@@ -138,14 +121,15 @@ class EmbeddingGeneration:
         return logits
 
     # each pass through a model produces a distribution of tokens for each known token, and the next unknown token
-    def generate(self, embeds, pembeds = None, size=None, logits2embeds=greedy, output=logits2strs, handler=None):#stop_sequence=None, handler=None):
+    def generate(self, embeds, size=None, logits2embeds=greedy, output=logits2strs, handler=None):#stop_sequence=None, handler=None): #pembeds=None
         
         # passing in the position embeddings, which are just more embeddings summed with the input embeddings, may for gpt2 require processing the transformer layers manually.
 
         #ids = self.inputs2ids(embeds)
         #if stop_sequence is not None:
         #    stop_sequence = self.inputs2ids(stop_sequence)
-        embeds, pembeds = self.inputs2embeds(embeds, pembeds)
+        #embeds, pembeds = self.inputs2embeds(embeds, pembeds)
+        embeds = self.inputs2embeds(embeds)
         #logits = torch.empty(*embeds.shape[:-2],0,self.embed.num_embeddings,device=self.model.device)
         logits2embeds = func2method(self, logits2embeds)
         output = func2method(self, output)
@@ -155,8 +139,8 @@ class EmbeddingGeneration:
             #if stop_sequences is not None:
             #     and ids[:-stop_sequence.shape[-1]] == stop_sequence
 
-            self.pembed_wrapper.prepare(inputs_embeds = embeds, positions_embeds = pembeds)
-            model_logits = self.model(inputs_embeds = embeds, position_ids = pembeds).logits
+            #self.pembed_wrapper.prepare(inputs_embeds = embeds, positions_embeds = pembeds)
+            model_logits = self.model(inputs_embeds = embeds).logits #, position_ids = pembeds).logits
             next_logits = model_logits[...,-1,:]
             next_embeds = logits2embeds(next_logits)
             provision = output(next_logits)
@@ -165,8 +149,8 @@ class EmbeddingGeneration:
             #next_ids = self.logits2ids(next_logits)
             #ids = torch.cat([ids, next_ids[...,None,:]], dim=-2)
             embeds = torch.cat([embeds, next_embeds[...,None,:]], dim=-2)
-            next_pembeds = self.pembed(torch.full(pembeds.shape[:-2],pembeds.shape[-2],device=self.model.device))
-            pembeds = torch.cat([pembeds, next_pembeds[...,None,:]], dim=-2)
+            #next_pembeds = self.pembed(torch.full(pembeds.shape[:-2],pembeds.shape[-2],device=self.model.device))
+            #pembeds = torch.cat([pembeds, next_pembeds[...,None,:]], dim=-2)
         #    if handler is not None and False is handler(logits=logits, ids=ids, embeds=embeds):
         #        break
         #return output(logits)
@@ -224,31 +208,32 @@ class EmbeddingGeneration:
 ##        
         return weighted_distances.log()
 
-    def inputs2embeds(self, inputs, pinputs = None):
-        inputs, pinputs = self.inputs2ids(inputs, pinputs)
+    def inputs2embeds(self, inputs):#, pinputs = None):
+        #inputs, pinputs = self.inputs2ids(inputs, pinputs)
+        inputs = self.inputs2ids(inputs)
         if not inputs.dtype.is_floating_point:
             inputs = self.ids2embeds(inputs)
         assert inputs.shape[-1] == self.embed.embedding_dim
-        if not pinputs.dtype.is_floating_point:
-            pinputs = self.pembed(pinputs)
-        assert pinputs.shape[-1] == self.pembed.embedding_dim
-        return inputs, pinputs
-    def inputs2ids(self, inputs, pinputs = None):
+        #if not pinputs.dtype.is_floating_point:
+        #    pinputs = self.pembed(pinputs)
+        #assert pinputs.shape[-1] == self.pembed.embedding_dim
+        return inputs#, pinputs
+    def inputs2ids(self, inputs):#, pinputs = None):
         if type(inputs) is str or (type(inputs) is list and (not len(inputs) or type(inputs[0]) is str)):
             inputs = self.strs2ids(inputs)
             if inputs.dtype.is_floating_point: # sometimes returned when data is empty
                 inputs = inputs.to(torch.long)
-        if pinputs is None:
-            if inputs.dtype.is_floating_point:
-                pinputs = torch.arange(inputs.shape[-2]).expand(inputs.shape[:-1])
-            else:
-                pinputs = torch.arange(inputs.shape[-1]).expand(inputs.shape)
+        #if pinputs is None:
+        #    if inputs.dtype.is_floating_point:
+        #        pinputs = torch.arange(inputs.shape[-2]).expand(inputs.shape[:-1])
+        #    else:
+        #        pinputs = torch.arange(inputs.shape[-1]).expand(inputs.shape)
         if torch.has_cuda:
             if inputs.device.type == 'cpu':
                 inputs = inputs.cuda()
-            if pinputs.device.type == 'cpu':
-                pinputs = pinputs.cuda()
-        return inputs, pinputs
+            #if pinputs.device.type == 'cpu':
+            #    pinputs = pinputs.cuda()
+        return inputs#, pinputs
 
     def train(self, optimiser=None, name=None, **optim_kwparams):
         prev_training = self.model.training

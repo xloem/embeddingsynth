@@ -11,7 +11,7 @@ with code.eval():
     str = "def calculate_epsilon_of_apocalypse():"
     #print(str)
     sys.stdout.write(str)
-    for logits, topk in code.generate(*code.inputs2embeds(str),output=code.logits2topk):
+    for logits, topk in code.generate(code.inputs2embeds(str),output=code.logits2topk):
         #print(topk)
         sys.stdout.write(topk[0])
         sys.stdout.flush()
