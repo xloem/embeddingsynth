@@ -23,6 +23,15 @@ class EmbeddingGeneration:
             self.embed = self.model.wte
         else:
             self.embed = self.model.transformer.wte
+
+        for token_name in 'BOS CLS EOS MASK PAD SEP UNK'.split(' '):
+            token_id = getattr(self.tokenizer, token_name.lower() + '_token_id')
+            if token_id is not None:
+                token_id_tensor = torch.tensor(token_id, device = self.model.device)
+                token_embeds = self.ids2embeds(token_id_tensor)
+            else:
+                token_embeds = None
+            setattr(self, token_name, token_embeds)
         
         #if hasattr(self.model, 'wpe'):
         #    self.pembed = self.model.wpe
@@ -116,6 +125,37 @@ class EmbeddingGeneration:
             return values
     def logits2logits(self, logits):
         return logits
+
+    def cat(self, *parts, shape = None):
+        if shape is None:
+            shape = [1] * max((len(part.shape) for part in parts))
+            for part in parts:
+                for idx in range(-len(part.shape), 0):
+                    shape[idx] = max(shape[idx], part.shape[idx])
+        reshaped = []
+        for idx, part in enumerate(parts):
+            while len(part.shape) < len(shape):
+                part = part[None,...]
+            part = part.expand(shape)
+            reshaped.append(part)
+        return torch.cat(reshaped)
+
+    def prefix(self, prefix, embeds):
+        return self.cat(prefix, embeds, shape = embeds.shape)
+
+    def suffix(self, embeds, suffix):
+        return self.cat(embeds, suffix, shape = embeds.shape)
+
+    def process(self, embeds, output=logits2strs):
+        embeds = self.inputs2embeds(embeds)
+        output = func2method(self, output)
+
+        prefixed_embeds = self.prefix(self.BOS, embeds)
+
+        output = func2method(self, output)
+        model_logits = self.model(inputs_embeds = prefixed_embeds).logits
+       
+        return output(model_logits)
 
     # each pass through a model produces a distribution of tokens for each known token, and the next unknown token
     def generate(self, embeds, size=None, logits2embeds=greedy, output=logits2strs, handler=None):#stop_sequence=None, handler=None): #pembeds=None
@@ -321,7 +361,8 @@ if __name__ == '__main__':
             stdout.write(word)
             stdout.flush()
     #print(code.generate('def', 32))
-#    gpt2 = GPT2()
+
+#    model = CodeParrot.small() #gpt2 = GPT2()
 #    #logits = gpt2.generate("Once upon", 16, logits2embeds=gpt2.sum, output=gpt2.logits2logits)
 #    ## see if we can reduce loss
 #    ## initialise optimizer, put models in training mode
@@ -331,15 +372,20 @@ if __name__ == '__main__':
 #    ##output = gpt2.generate("Hello world,", 16, logits2embeds=gpt2.sum)
 #    ##print(output)
 #
+#    import pdb; pdb.set_trace()
 #    batch_size=16
 #    prompt_len=4
 #    gen_len=16
-#    with gpt2.train(torch.optim.AdamW, lr=0.0001) as training:
+#    with model.train(torch.optim.AdamW, lr=0.0001) as training:
 #        while True:
 #            with torch.no_grad():
-#                prompts = torch.randint(0, gpt2.embed.num_embeddings, (batch_size,prompt_len))
-#                embeds = gpt2.generate(prompts, gen_len + prompt_len, output=gpt2.sum)
-#                loss = gpt2.loss(embeds)
+#                # here we generate prompt
+#                prompts = torch.randint(0, model.embed.num_embeddings, (batch_size,prompt_len))
+#                # 
+#                logits, sum = next(model.generate(prompts, gen_len + prompt_len, output=model.sum))
+#
+#                # this uses probabilities of every token
+#                loss = model.loss(embeds)
 #                loss.backward()
 #                print(loss)
 #                
