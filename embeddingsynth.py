@@ -6,9 +6,6 @@ def func2method(self, func):
     else:
         return func
 
-'''FACTOR OUT PEMBED IT MIGHT BE SPECIFIC TO GPT2.'''
-'''This could be done with something passed to the cosntructor, or an inherited method.'''
-
 class EmbeddingGeneration:
     def __init__(self, generation_model, tokenizer):
         if type(generation_model) is str:
